@@ -482,6 +482,46 @@ esp_err_t uart_param_config(uart_port_t uart_num, const uart_config_t *uart_conf
     return r;
 }
 
+esp_err_t uart_set_mode(uart_port_t uart_num, uart_mode_t mode)
+{
+	UART_CHECK((uart_num < UART_NUM_MAX), "uart_num error", ESP_FAIL);
+	if((mode == UART_MODE_RS485_A) || (mode == UART_MODE_RS485_B) || (mode == UART_MODE_RS485_SOFT))
+		UART_CHECK((UART[uart_num]->conf1.rx_flow_en != 1), "disable hw flowctrl before using 485 half-duplex mode", ESP_FAIL);
+	
+	UART_ENTER_CRITICAL(&uart_spinlock[uart_num]);
+	UART[uart_num]->rs485_conf.en = 0;
+	UART[uart_num]->rs485_conf.tx_rx_en = 0;
+	UART[uart_num]->rs485_conf.rx_busy_tx_en = 0;
+	UART[uart_num]->conf0.irda_en = 0;
+	UART[uart_num]->conf0.sw_rts = 0;
+	switch(mode)
+	{
+		case UART_MODE_UART:
+			break;
+		case UART_MODE_RS485_A:
+			UART[uart_num]->rs485_conf.en = 1;
+			break;
+		case UART_MODE_RS485_B:
+			UART[uart_num]->rs485_conf.rx_busy_tx_en = 1;
+			UART[uart_num]->rs485_conf.en = 1;
+			break;
+		case UART_MODE_RS485_SOFT:
+			UART[uart_num]->conf0.sw_rts = 1;
+			UART[uart_num]->rs485_conf.en = 1;
+			UART[uart_num]->rs485_conf.tx_rx_en  = 1;
+			UART[uart_num]->rs485_conf.rx_busy_tx_en = 1;
+			break;
+		case UART_MODE_IRDA:
+			UART[uart_num]->conf0.irda_en = 1;
+			break;
+		default:
+			UART_CHECK(1, "unsuported uart mode", ESP_FAIL);
+			break;
+	}
+	UART_EXIT_CRITICAL(&uart_spinlock[uart_num]);
+	return ESP_OK;
+}
+
 esp_err_t uart_intr_config(uart_port_t uart_num, const uart_intr_config_t *intr_conf)
 {
     UART_CHECK((uart_num < UART_NUM_MAX), "uart_num error", ESP_FAIL);
@@ -581,6 +621,12 @@ static void uart_rx_intr_handler_default(void *param)
                     if(p_uart->tx_len_tot > 0 && p_uart->tx_ptr && p_uart->tx_len_cur > 0) {
                         //To fill the TX FIFO.
                         int send_len = p_uart->tx_len_cur > tx_fifo_rem ? tx_fifo_rem : p_uart->tx_len_cur;
+						UART_ENTER_CRITICAL_ISR(&uart_spinlock[uart_num]);
+						if(uart_reg->rs485_conf.en) {
+							uart_reg->conf0.sw_rts = 0;
+							uart_reg->int_ena.tx_done = 1;
+						}
+						UART_EXIT_CRITICAL_ISR(&uart_spinlock[uart_num]);
                         for(buf_idx = 0; buf_idx < send_len; buf_idx++) {
                             WRITE_PERI_REG(UART_FIFO_AHB_REG(uart_num), *(p_uart->tx_ptr++) & 0xff);
                         }
@@ -711,6 +757,11 @@ static void uart_rx_intr_handler_default(void *param)
             UART_ENTER_CRITICAL_ISR(&uart_spinlock[uart_num]);
             uart_reg->int_ena.tx_done = 0;
             uart_reg->int_clr.tx_done = 1;
+			if(uart_reg->rs485_conf.en) {
+				uart_reg->conf0.rxfifo_rst = 1; // Workaround to clear phantom 00 characters
+				uart_reg->conf0.rxfifo_rst = 0; // received after TX.
+				uart_reg->conf0.sw_rts = 1; 
+			}
             UART_EXIT_CRITICAL_ISR(&uart_spinlock[uart_num]);
             xSemaphoreGiveFromISR(p_uart_obj[uart_num]->tx_done_sem, &HPTaskAwoken);
             if(HPTaskAwoken == pdTRUE) {
@@ -781,6 +832,10 @@ static int uart_fill_fifo(uart_port_t uart_num, const char* buffer, uint32_t len
     uint8_t tx_fifo_cnt = UART[uart_num]->status.txfifo_cnt;
     uint8_t tx_remain_fifo_cnt = (UART_FIFO_LEN - tx_fifo_cnt);
     uint8_t copy_cnt = (len >= tx_remain_fifo_cnt ? tx_remain_fifo_cnt : len);
+	if(UART[uart_num]->rs485_conf.en) {
+		UART[uart_num]->conf0.sw_rts = 0;
+		UART[uart_num]->int_ena.tx_done = 1;
+	}
     for(i = 0; i < copy_cnt; i++) {
         WRITE_PERI_REG(UART_FIFO_AHB_REG(uart_num), buffer[i]);
     }

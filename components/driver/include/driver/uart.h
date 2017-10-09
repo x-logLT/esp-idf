@@ -46,6 +46,14 @@ extern "C" {
 #define UART_INVERSE_TXD   (UART_TXD_INV_M)    /*!< UART TXD output inverse*/
 #define UART_INVERSE_RTS   (UART_RTS_INV_M)    /*!< UART RTS output inverse*/
 
+typedef enum {
+	UART_MODE_UART = 0x0,
+	UART_MODE_RS485_A = 0x1,
+	UART_MODE_RS485_B = 0x2,
+	UART_MODE_RS485_SOFT = 0x3,
+	UART_MODE_IRDA = 0x4,
+} uart_mode_t;
+
 /**
  * @brief UART word length constants
  */
@@ -467,6 +475,19 @@ esp_err_t uart_set_dtr(uart_port_t uart_num, int level);
  *     - ESP_FAIL Parameter error
  */
 esp_err_t uart_param_config(uart_port_t uart_num, const uart_config_t *uart_config);
+
+
+/**
+* @brief UART set mode
+ *
+ * @param uart_num     UART_NUM_0, UART_NUM_1 or UART_NUM_2
+ * @param mode UART    UART_MODE_UART, UART_MODE_RS485_A, UART_MODE_RS485_B, UART_MODE_RS485_SOFT or UART_MODE_IRDA 
+ *
+ * @return
+ *     - ESP_OK   Success
+ *     - ESP_FAIL Parameter error
+ */
+esp_err_t uart_set_mode(uart_port_t uart_num, uart_mode_t mode);
 
 /**
 * @brief UART interrupt configure
