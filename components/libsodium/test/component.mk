@@ -3,6 +3,7 @@
 #
 
 LS_TESTDIR := ../libsodium/test/default
+LS_TEST_OBJDIR := libsodium/test/default
 
 ifdef TESTS_ALL
 $(info not linking libsodium tests, use 'TEST_COMPONENTS=libsodium' to test it)
@@ -25,11 +26,11 @@ COMPONENT_OBJS := test_sodium.o
 # Run each test case from test_sodium.c as CASENAME_xmain().
 
 define sodium_testcase
-# this generates 'warning "main" redefined' warnings at
-# runtime. Only solution involves patching libsodium's cmptest.h
-$(LS_TESTDIR)/$(1).o: CFLAGS+=-Dxmain=$(1)_xmain -Dmain=$(1)_main
-ote:
-COMPONENT_OBJS += $(LS_TESTDIR)/$(1).o
+# This would generate 'warning "main" redefined' warnings at runtime, which are
+# silenced here. Only other solution involves patching libsodium's cmptest.h.
+$(LS_TEST_OBJDIR)/$(1).o: CFLAGS+=-Dxmain=$(1)_xmain -Dmain=$(1)_main
+$(LS_TEST_OBJDIR)/$(1).o: CPPFLAGS+=-Wp,-w
+COMPONENT_OBJS += $(LS_TEST_OBJDIR)/$(1).o
 endef
 
 TEST_CASES := chacha20 aead_chacha20poly1305 box box2 ed25519_convert sign hash

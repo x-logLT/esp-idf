@@ -5,7 +5,7 @@
 COMPONENT_SRCDIRS := . hwcrypto
 LIBS ?=
 ifndef CONFIG_NO_BLOBS
-LIBS += core rtc net80211 pp wpa smartconfig coexist wps wpa2 espnow phy
+LIBS += core rtc net80211 pp wpa smartconfig coexist wps wpa2 espnow phy mesh
 endif
 
 #Linker scripts used to link the final application.
@@ -38,11 +38,6 @@ COMPONENT_ADD_LDFLAGS += $(COMPONENT_PATH)/libhal.a \
                          -u ld_include_panic_highint_hdl \
                          $(addprefix -T ,$(LINKER_SCRIPTS))
 
-#The cache workaround also needs a c++ standard library recompiled with the workaround.
-ifdef CONFIG_SPIRAM_CACHE_WORKAROUND
-COMPONENT_ADD_LDFLAGS += $(COMPONENT_PATH)/libstdcc++-cache-workaround.a
-endif
-
 ALL_LIB_FILES := $(patsubst %,$(COMPONENT_PATH)/lib/lib%.a,$(LIBS))
 
 COMPONENT_SUBMODULES += lib
@@ -61,3 +56,7 @@ esp32_out.ld: $(COMPONENT_PATH)/ld/esp32.ld ../include/sdkconfig.h
 	$(CC) -I ../include -C -P -x c -E $< -o $@
 
 COMPONENT_EXTRA_CLEAN := esp32_out.ld
+
+# disable stack protection in files which are involved in initialization of that feature
+stack_check.o: CFLAGS := $(filter-out -fstack-protector%, $(CFLAGS))
+cpu_start.o: CFLAGS := $(filter-out -fstack-protector%, $(CFLAGS))

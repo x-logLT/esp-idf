@@ -41,9 +41,11 @@
 static uint32_t rtc_clk_cal_internal(rtc_cal_sel_t cal_clk, uint32_t slowclk_cycles)
 {
     /* Enable requested clock (150k clock is always on) */
-    if (cal_clk == RTC_CAL_32K_XTAL) {
-        SET_PERI_REG_MASK(RTC_CNTL_CLK_CONF_REG, RTC_CNTL_DIG_XTAL32K_EN);
+    int dig_32k_xtal_state = REG_GET_FIELD(RTC_CNTL_CLK_CONF_REG, RTC_CNTL_DIG_XTAL32K_EN);
+    if (cal_clk == RTC_CAL_32K_XTAL && !dig_32k_xtal_state) {
+        REG_SET_FIELD(RTC_CNTL_CLK_CONF_REG, RTC_CNTL_DIG_XTAL32K_EN, 1);
     }
+
     if (cal_clk == RTC_CAL_8MD256) {
         SET_PERI_REG_MASK(RTC_CNTL_CLK_CONF_REG, RTC_CNTL_DIG_CLK8M_D256_EN);
     }
@@ -79,9 +81,9 @@ static uint32_t rtc_clk_cal_internal(rtc_cal_sel_t cal_clk, uint32_t slowclk_cyc
         timeout_us--;
         ets_delay_us(1);
     }
-    if (cal_clk == RTC_CAL_32K_XTAL) {
-        CLEAR_PERI_REG_MASK(RTC_CNTL_CLK_CONF_REG, RTC_CNTL_DIG_XTAL32K_EN);
-    }
+
+    REG_SET_FIELD(RTC_CNTL_CLK_CONF_REG, RTC_CNTL_DIG_XTAL32K_EN, dig_32k_xtal_state);
+
     if (cal_clk == RTC_CAL_8MD256) {
         CLEAR_PERI_REG_MASK(RTC_CNTL_CLK_CONF_REG, RTC_CNTL_DIG_CLK8M_D256_EN);
     }
@@ -135,3 +137,20 @@ uint64_t rtc_time_get()
     t |= ((uint64_t) READ_PERI_REG(RTC_CNTL_TIME1_REG)) << 32;
     return t;
 }
+
+void rtc_clk_wait_for_slow_cycle()
+{
+    REG_CLR_BIT(TIMG_RTCCALICFG_REG(0), TIMG_RTC_CALI_START_CYCLING | TIMG_RTC_CALI_START);
+    REG_CLR_BIT(TIMG_RTCCALICFG_REG(0), TIMG_RTC_CALI_RDY);
+    REG_SET_FIELD(TIMG_RTCCALICFG_REG(0), TIMG_RTC_CALI_CLK_SEL, RTC_CAL_RTC_MUX);
+    /* Request to run calibration for 0 slow clock cycles.
+     * RDY bit will be set on the nearest slow clock cycle.
+     */
+    REG_SET_FIELD(TIMG_RTCCALICFG_REG(0), TIMG_RTC_CALI_MAX, 0);
+    REG_SET_BIT(TIMG_RTCCALICFG_REG(0), TIMG_RTC_CALI_START);
+    ets_delay_us(1); /* RDY needs some time to go low */
+    while (!GET_PERI_REG_MASK(TIMG_RTCCALICFG_REG(0), TIMG_RTC_CALI_RDY)) {
+        ets_delay_us(1);
+    }
+}
+

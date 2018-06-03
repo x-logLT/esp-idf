@@ -36,15 +36,15 @@
 //#include <stdio.h>
 #include <stddef.h>
 
-#include "bt_types.h"
-#include "bt_target.h"
-#include "controller.h"
-#include "hcimsgs.h"
-#include "btu.h"
-#include "btm_api.h"
+#include "stack/bt_types.h"
+#include "common/bt_target.h"
+#include "device/controller.h"
+#include "stack/hcimsgs.h"
+#include "stack/btu.h"
+#include "stack/btm_api.h"
 #include "btm_int.h"
 #include "l2c_int.h"
-#include "hcidefs.h"
+#include "stack/hcidefs.h"
 //#include "bt_utils.h"
 
 static void btm_read_remote_features (UINT16 handle);
@@ -335,7 +335,7 @@ void btm_acl_created (BD_ADDR bda, DEV_CLASS dc, BD_NAME bdn,
                     btsnd_hcic_ble_read_remote_feat(p->hci_handle);
                 } else if (HCI_LE_SLAVE_INIT_FEAT_EXC_SUPPORTED(controller_get_interface()->get_features_ble()->as_array)
                          && link_role == HCI_ROLE_SLAVE) {
-                    btsnd_hcic_ble_read_remote_feat(p->hci_handle);
+                    btsnd_hcic_rmt_ver_req (p->hci_handle);
                 } else {
                     btm_establish_continue(p);
                 }
@@ -906,7 +906,17 @@ void btm_read_remote_version_complete (UINT8 *p)
             }
 #if BLE_INCLUDED == TRUE
             if (p_acl_cb->transport == BT_TRANSPORT_LE) {
-                l2cble_notify_le_connection (p_acl_cb->remote_addr);
+                if(p_acl_cb->link_role == HCI_ROLE_MASTER) {
+                    if (HCI_LE_DATA_LEN_EXT_SUPPORTED(p_acl_cb->peer_le_features)) {
+                        uint16_t data_length = controller_get_interface()->get_ble_default_data_packet_length();
+                        uint16_t data_txtime = controller_get_interface()->get_ble_default_data_packet_txtime();
+                        btsnd_hcic_ble_set_data_length(p_acl_cb->hci_handle, data_length, data_txtime);
+                    }
+                    l2cble_notify_le_connection (p_acl_cb->remote_addr);
+                } else {
+                     //slave role, read remote feature
+                     btsnd_hcic_ble_read_remote_feat(p_acl_cb->hci_handle);
+                }
             }
 #endif
             break;
@@ -2073,7 +2083,7 @@ void BTM_BleGetWhiteListSize(uint16_t *length)
 {
     tBTM_BLE_CB *p_cb = &btm_cb.ble_ctr_cb;
     if (p_cb->white_list_avail_size == 0) {
-        BTM_TRACE_ERROR("%s Whitelist full.", __func__);
+        BTM_TRACE_DEBUG("%s Whitelist full.", __func__);
     }
     *length = p_cb->white_list_avail_size;
     return;

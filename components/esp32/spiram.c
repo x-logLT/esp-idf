@@ -91,9 +91,7 @@ bool esp_spiram_test()
     }
 }
 
-
-
-esp_err_t esp_spiram_init()
+void IRAM_ATTR esp_spiram_init_cache()
 {
     //Enable external RAM in MMU
     cache_sram_mmu_set( 0, 0, SOC_EXTRAM_DATA_LOW, 0, 32, 128 );
@@ -102,11 +100,17 @@ esp_err_t esp_spiram_init()
     DPORT_CLEAR_PERI_REG_MASK(DPORT_APP_CACHE_CTRL1_REG, DPORT_APP_CACHE_MASK_DRAM1);
     cache_sram_mmu_set( 1, 0, SOC_EXTRAM_DATA_LOW, 0, 32, 128 );
 #endif
+}
 
+
+esp_err_t esp_spiram_init()
+{
     esp_err_t r;
     r = psram_enable(PSRAM_SPEED, PSRAM_MODE);
     if (r != ESP_OK) {
+#if CONFIG_SPIRAM_IGNORE_NOTFOUND
         ESP_EARLY_LOGE(TAG, "SPI RAM enabled but initialization failed. Bailing out.");
+#endif
         return r;
     }
 
@@ -139,7 +143,7 @@ esp_err_t esp_spiram_reserve_dma_pool(size_t size) {
     dma_heap=heap_caps_malloc(size, MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL);
     if (!dma_heap) return ESP_ERR_NO_MEM;
     uint32_t caps[]={MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL, 0, MALLOC_CAP_8BIT|MALLOC_CAP_32BIT};
-    return heap_caps_add_region_with_caps(caps, dma_heap, dma_heap+size-1);
+    return heap_caps_add_region_with_caps(caps, (intptr_t) dma_heap, (intptr_t) dma_heap+size-1);
 }
 
 size_t esp_spiram_get_size()

@@ -15,11 +15,15 @@
 #include "freertos/xtensa_api.h"
 #include "unity.h"
 #include "driver/spi_master.h"
+#include "driver/spi_slave.h"
 #include "soc/dport_reg.h"
 #include "soc/spi_reg.h"
 #include "soc/spi_struct.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "freertos/ringbuf.h"
 
+const static char TAG[] = "test_spi";
 
 static void check_spi_pre_n_for(int clk, int pre, int n)
 {
@@ -227,7 +231,7 @@ TEST_CASE("SPI Master test, interaction of multiple devs", "[spi][ignore]") {
         .clock_speed_hz=1000000,
         .duty_cycle_pos=128,
         .mode=0,
-        .spics_io_num=23,
+        .spics_io_num=23, 
         .queue_size=3,
     };
     spi_device_handle_t handle1=setup_spi_bus(80000, true);
@@ -257,6 +261,156 @@ TEST_CASE("SPI Master test, interaction of multiple devs", "[spi][ignore]") {
     ret=spi_bus_remove_device(handle2);
     TEST_ASSERT(ret==ESP_OK);
     destroy_spi_bus(handle1);
+}
+
+#define NATIVE_SCLK 14
+#define NATIVE_MISO 12
+#define NATIVE_MOSI 13
+#define NATIVE_WP   2
+#define NATIVE_HD   4
+
+TEST_CASE("spi bus setting with different pin configs", "[spi]")
+{
+    spi_bus_config_t cfg;
+    uint32_t flags_o;
+    uint32_t flags_expected;
+    
+    ESP_LOGI(TAG, "test 6 native output pins...");
+    flags_expected = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO | SPICOMMON_BUSFLAG_NATIVE_PINS | SPICOMMON_BUSFLAG_QUAD;
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = NATIVE_MISO, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+
+    ESP_LOGI(TAG, "test 4 native output pins...");
+    flags_expected = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO | SPICOMMON_BUSFLAG_NATIVE_PINS | SPICOMMON_BUSFLAG_DUAL;
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = NATIVE_MISO, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = -1, .quadwp_io_num = -1,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+
+    ESP_LOGI(TAG, "test 6 output pins...");
+    flags_expected = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO | SPICOMMON_BUSFLAG_QUAD;
+    //swap MOSI and MISO
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MISO, .miso_io_num = NATIVE_MOSI, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+
+    ESP_LOGI(TAG, "test 4 output pins...");
+    flags_expected = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO |  SPICOMMON_BUSFLAG_DUAL;
+    //swap MOSI and MISO
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MISO, .miso_io_num = NATIVE_MOSI, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = -1, .quadwp_io_num = -1,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+
+    ESP_LOGI(TAG, "test master 5 output pins and MOSI on input-only pin...");
+    flags_expected = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO | SPICOMMON_BUSFLAG_WPHD;
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = 34, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+
+    ESP_LOGI(TAG, "test slave 5 output pins and MISO on input-only pin...");
+    flags_expected = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO | SPICOMMON_BUSFLAG_WPHD;
+    cfg = (spi_bus_config_t){.mosi_io_num = 34, .miso_io_num = NATIVE_MISO, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};    
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+
+    ESP_LOGI(TAG, "test master 3 output pins and MOSI on input-only pin...");
+    flags_expected = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO;
+
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = 34, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = -1, .quadwp_io_num = -1,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+
+    ESP_LOGI(TAG, "test slave 3 output pins and MISO on input-only pin...");
+    flags_expected = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO;
+    cfg = (spi_bus_config_t){.mosi_io_num = 34, .miso_io_num = NATIVE_MISO, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = -1, .quadwp_io_num = -1,
+        .max_transfer_sz = 8, .flags = flags_expected};    
+    TEST_ESP_OK(spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    TEST_ASSERT_EQUAL_HEX32( flags_expected, flags_o );
+
+    ESP_LOGI(TAG, "check native flag for 6 output pins...");
+    flags_expected = SPICOMMON_BUSFLAG_NATIVE_PINS;
+    //swap MOSI and MISO
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MISO, .miso_io_num = NATIVE_MOSI, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+
+    ESP_LOGI(TAG, "check native flag for 4 output pins...");
+    flags_expected = SPICOMMON_BUSFLAG_NATIVE_PINS;
+    //swap MOSI and MISO
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MISO, .miso_io_num = NATIVE_MOSI, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = -1, .quadwp_io_num = -1,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+
+    ESP_LOGI(TAG, "check dual flag for master 5 output pins and MISO/MOSI on input-only pin...");
+    flags_expected = SPICOMMON_BUSFLAG_DUAL;
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = 34, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    cfg = (spi_bus_config_t){.mosi_io_num = 34, .miso_io_num = NATIVE_MISO, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+
+    ESP_LOGI(TAG, "check dual flag for master 3 output pins and MISO/MOSI on input-only pin...");
+    flags_expected = SPICOMMON_BUSFLAG_DUAL;
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = 34, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = -1, .quadwp_io_num = -1,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    cfg = (spi_bus_config_t){.mosi_io_num = 34, .miso_io_num = NATIVE_MISO, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = -1, .quadwp_io_num = -1,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+
+    ESP_LOGI(TAG, "check sclk flag...");
+    flags_expected = SPICOMMON_BUSFLAG_SCLK;
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = NATIVE_MISO, .sclk_io_num = -1, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    
+    ESP_LOGI(TAG, "check mosi flag...");
+    flags_expected = SPICOMMON_BUSFLAG_MOSI;
+    cfg = (spi_bus_config_t){.mosi_io_num = -1, .miso_io_num = NATIVE_MISO, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    
+    ESP_LOGI(TAG, "check miso flag...");
+    flags_expected = SPICOMMON_BUSFLAG_MISO;
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = -1, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+
+    ESP_LOGI(TAG, "check quad flag...");
+    flags_expected = SPICOMMON_BUSFLAG_QUAD;
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = NATIVE_MISO, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = -1, .quadwp_io_num = NATIVE_WP,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
+    cfg = (spi_bus_config_t){.mosi_io_num = NATIVE_MOSI, .miso_io_num = NATIVE_MISO, .sclk_io_num = NATIVE_SCLK, .quadhd_io_num = NATIVE_HD, .quadwp_io_num = -1,
+        .max_transfer_sz = 8, .flags = flags_expected};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_MASTER, &flags_o));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, spicommon_bus_initialize_io(HSPI_HOST, &cfg, 0, flags_expected|SPICOMMON_BUSFLAG_SLAVE, &flags_o));
 }
 
 TEST_CASE("SPI Master no response when switch from host1 (HSPI) to host2 (VSPI)", "[spi]")
@@ -488,4 +642,343 @@ TEST_CASE("SPI Master DMA test: length, start, not aligned", "[spi]")
 
     TEST_ASSERT(spi_bus_remove_device(spi) == ESP_OK);
     TEST_ASSERT(spi_bus_free(HSPI_HOST) == ESP_OK);
+}
+
+static const char MASTER_TAG[] = "test_master";
+static const char SLAVE_TAG[] = "test_slave";
+DRAM_ATTR static uint8_t master_send[] = {0x93, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0xaa, 0xcc, 0xff, 0xee, 0x55, 0x77, 0x88, 0x43};
+DRAM_ATTR static uint8_t slave_send[] = { 0xaa, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10, 0x13, 0x57, 0x9b, 0xdf, 0x24, 0x68, 0xac, 0xe0 };
+
+static void master_init( spi_device_handle_t* spi, int mode, uint32_t speed)
+{
+    esp_err_t ret;
+    spi_bus_config_t buscfg={
+        .miso_io_num=PIN_NUM_MISO, 
+        .mosi_io_num=PIN_NUM_MOSI,
+        .sclk_io_num=PIN_NUM_CLK,
+        .quadwp_io_num=-1,
+        .quadhd_io_num=-1
+    };
+    spi_device_interface_config_t devcfg={
+        .clock_speed_hz=speed,            //currently only up to 4MHz for internel connect
+        .mode=mode,                                //SPI mode 0
+        .spics_io_num=PIN_NUM_CS,               //CS pin
+        .queue_size=16,                          //We want to be able to queue 7 transactions at a time
+        .pre_cb=NULL,  
+        .cs_ena_pretrans = 0,
+    };
+    //Initialize the SPI bus
+    ret=spi_bus_initialize(HSPI_HOST, &buscfg, 1);
+    TEST_ASSERT(ret==ESP_OK);
+    //Attach the LCD to the SPI bus
+    ret=spi_bus_add_device(HSPI_HOST, &devcfg, spi);
+    TEST_ASSERT(ret==ESP_OK);
+}
+
+static void slave_init(int mode, int dma_chan)
+{
+    //Configuration for the SPI bus
+    spi_bus_config_t buscfg={
+        .mosi_io_num=PIN_NUM_MOSI,
+        .miso_io_num=PIN_NUM_MISO,
+        .sclk_io_num=PIN_NUM_CLK
+    };
+    //Configuration for the SPI slave interface
+    spi_slave_interface_config_t slvcfg={
+        .mode=mode,
+        .spics_io_num=PIN_NUM_CS,
+        .queue_size=3,
+        .flags=0,
+    };
+    //Enable pull-ups on SPI lines so we don't detect rogue pulses when no master is connected.
+    gpio_set_pull_mode(PIN_NUM_MOSI, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(PIN_NUM_CLK, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(PIN_NUM_CS, GPIO_PULLUP_ONLY);
+    //Initialize SPI slave interface
+    TEST_ESP_OK( spi_slave_initialize(VSPI_HOST, &buscfg, &slvcfg, dma_chan) );
+}
+
+typedef struct {
+    uint32_t len;
+    uint8_t *start;
+} slave_txdata_t;
+
+typedef struct {
+    uint32_t len;
+    uint8_t data[1];
+} slave_rxdata_t;
+
+typedef struct {
+    RingbufHandle_t data_received;
+    QueueHandle_t data_to_send;
+} spi_slave_task_context_t;
+
+esp_err_t init_slave_context(spi_slave_task_context_t *context)
+{
+    context->data_to_send = xQueueCreate( 16, sizeof( slave_txdata_t ));
+    if ( context->data_to_send == NULL ) {
+        return ESP_ERR_NO_MEM;
+    }
+    context->data_received = xRingbufferCreate( 1024, RINGBUF_TYPE_NOSPLIT );
+    if ( context->data_received == NULL ) {
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+void deinit_slave_context(spi_slave_task_context_t *context)
+{
+    TEST_ASSERT( context->data_to_send != NULL );
+    vQueueDelete( context->data_to_send );
+    context->data_to_send = NULL;
+    TEST_ASSERT( context->data_received != NULL );
+    vRingbufferDelete( context->data_received );
+    context->data_received = NULL;
+}
+
+static void task_slave(void* arg)
+{
+    spi_slave_task_context_t* context = (spi_slave_task_context_t*) arg;
+    QueueHandle_t queue = context->data_to_send;
+    RingbufHandle_t ringbuf = context->data_received;
+    uint8_t recvbuf[320+4];
+    slave_txdata_t txdata;
+
+    ESP_LOGI( SLAVE_TAG, "slave up" );
+    //never quit, but blocked by the queue, waiting to be killed, when no more send from main task.
+    while( 1 ) {
+        xQueueReceive( queue, &txdata, portMAX_DELAY );
+
+        ESP_LOGI( "test", "received: %p", txdata.start );
+        spi_slave_transaction_t t = {};
+        t.length = txdata.len;
+        t.tx_buffer = txdata.start;
+        t.rx_buffer = recvbuf+4;
+        //loop until trans_len != 0 to skip glitches
+        do {
+            TEST_ESP_OK( spi_slave_transmit( VSPI_HOST, &t, portMAX_DELAY ) );
+        } while ( t.trans_len == 0 );
+        *(uint32_t*)recvbuf = t.trans_len;
+        ESP_LOGI( SLAVE_TAG, "received: %d", t.trans_len );
+        xRingbufferSend( ringbuf, recvbuf, 4+(t.trans_len+7)/8, portMAX_DELAY );
+    }
+}
+
+TEST_CASE("SPI master variable cmd & addr test","[spi]")
+{
+    uint8_t *tx_buf=master_send;
+    uint8_t rx_buf[320];
+    uint8_t *rx_buf_ptr = rx_buf;
+
+    spi_slave_task_context_t slave_context = {};
+    esp_err_t err = init_slave_context( &slave_context );
+    TEST_ASSERT( err == ESP_OK );
+
+    spi_device_handle_t spi;
+    //initial master, mode 0, 1MHz
+    master_init( &spi, 0, 1*1000*1000 );
+    //initial slave, mode 0, no dma
+    slave_init(0, 0);
+
+    //do internal connection
+    int_connect( PIN_NUM_MOSI,  HSPID_OUT_IDX,   VSPIQ_IN_IDX );
+    int_connect( PIN_NUM_MISO,  VSPIQ_OUT_IDX,   HSPID_IN_IDX );
+    int_connect( PIN_NUM_CS,    HSPICS0_OUT_IDX, VSPICS0_IN_IDX );
+    int_connect( PIN_NUM_CLK,   HSPICLK_OUT_IDX, VSPICLK_IN_IDX );
+
+    TaskHandle_t handle_slave;
+    xTaskCreate( task_slave, "spi_slave", 4096, &slave_context, 0, &handle_slave);
+
+    slave_txdata_t slave_txdata[16];
+    spi_transaction_ext_t trans[16];
+    for( int i= 0; i < 16; i ++ ) {
+        //prepare slave tx data
+        slave_txdata[i] = (slave_txdata_t) {
+            .start = slave_send + 4*(i%3),
+            .len = 256,
+        };
+        xQueueSend( slave_context.data_to_send, &slave_txdata[i], portMAX_DELAY );
+        //prepare master tx data
+        trans[i] = (spi_transaction_ext_t) {
+            .base = {
+                .flags = SPI_TRANS_VARIABLE_CMD | SPI_TRANS_VARIABLE_ADDR,
+                .addr = 0x456789ab,
+                .cmd = 0xcdef,
+
+                .length = 8*i,
+                .tx_buffer = tx_buf+i,
+                .rx_buffer = rx_buf_ptr,
+            },
+            .command_bits = ((i+1)%3) * 8,
+            .address_bits = ((i/3)%5) * 8,
+        };
+        if ( trans[i].base.length == 0 ) {
+            trans[i].base.tx_buffer = NULL;
+            trans[i].base.rx_buffer = NULL;
+        } else  {
+            rx_buf_ptr += (trans[i].base.length + 31)/32*4;
+        }
+    }
+
+    vTaskDelay(10);
+
+    for ( int i = 0; i < 16; i ++ ) {
+        TEST_ESP_OK (spi_device_queue_trans( spi, (spi_transaction_t*)&trans[i], portMAX_DELAY ) );
+        vTaskDelay(10);
+    }
+
+    for( int i= 0; i < 16; i ++ ) {
+        //wait for both master and slave end
+        ESP_LOGI( MASTER_TAG, "===== test%d =====", i );
+        spi_transaction_ext_t *t;
+        size_t rcv_len;
+        spi_device_get_trans_result( spi, (spi_transaction_t**)&t, portMAX_DELAY );
+        TEST_ASSERT( t == &trans[i] );
+        if ( trans[i].base.length != 0 ) {
+            ESP_LOG_BUFFER_HEX( "master tx", trans[i].base.tx_buffer, trans[i].base.length/8 );
+            ESP_LOG_BUFFER_HEX( "master rx", trans[i].base.rx_buffer, trans[i].base.length/8 );
+        } else {
+            ESP_LOGI( "master tx", "no data" );
+            ESP_LOGI( "master rx", "no data" );
+        }
+
+        slave_rxdata_t *rcv_data = xRingbufferReceive( slave_context.data_received, &rcv_len, portMAX_DELAY );
+        uint8_t *buffer = rcv_data->data;
+        rcv_len = rcv_data->len;
+        ESP_LOGI(SLAVE_TAG, "trans_len: %d", rcv_len);
+        ESP_LOG_BUFFER_HEX( "slave tx", slave_txdata[i].start, (rcv_len+7)/8);
+        ESP_LOG_BUFFER_HEX( "slave rx", buffer, (rcv_len+7)/8);
+        //check result
+        uint8_t *ptr_addr = (uint8_t*)&t->base.addr;
+        uint8_t *ptr_cmd = (uint8_t*)&t->base.cmd;
+        for ( int j = 0; j < t->command_bits/8; j ++ ) {
+            TEST_ASSERT_EQUAL( buffer[j], ptr_cmd[t->command_bits/8-j-1] );
+        }
+        for ( int j = 0; j < t->address_bits/8; j ++ ) {
+            TEST_ASSERT_EQUAL( buffer[t->command_bits/8+j], ptr_addr[t->address_bits/8-j-1] );
+        }
+        if ( t->base.length != 0) {
+            TEST_ASSERT_EQUAL_HEX8_ARRAY(t->base.tx_buffer, buffer + (t->command_bits + t->address_bits)/8, t->base.length/8);
+            TEST_ASSERT_EQUAL_HEX8_ARRAY(slave_txdata[i].start + (t->command_bits + t->address_bits)/8, t->base.rx_buffer, t->base.length/8);
+        }
+        TEST_ASSERT_EQUAL( t->base.length + t->command_bits + t->address_bits, rcv_len );
+
+        //clean
+        vRingbufferReturnItem( slave_context.data_received, buffer );
+    }
+
+    vTaskDelete( handle_slave );
+    handle_slave = 0;
+
+    deinit_slave_context(&slave_context);
+    
+    TEST_ASSERT(spi_slave_free(VSPI_HOST) == ESP_OK);
+
+    TEST_ASSERT(spi_bus_remove_device(spi) == ESP_OK);
+    TEST_ASSERT(spi_bus_free(HSPI_HOST) == ESP_OK);
+
+    ESP_LOGI(MASTER_TAG, "test passed.");
+}
+
+#define RECORD_TIME_PREPARE() uint32_t __t1, __t2
+#define RECORD_TIME_START()   do {__t1 = xthal_get_ccount();}while(0)
+#define RECORD_TIME_END(p_time) do{__t2 = xthal_get_ccount(); *p_time = (__t2-__t1)/240;}while(0)
+
+static void speed_setup(spi_device_handle_t* spi, bool use_dma)
+{
+    esp_err_t ret;
+    spi_bus_config_t buscfg={
+        .miso_io_num=PIN_NUM_MISO, 
+        .mosi_io_num=PIN_NUM_MOSI,
+        .sclk_io_num=PIN_NUM_CLK,
+        .quadwp_io_num=-1,
+        .quadhd_io_num=-1
+    };
+    spi_device_interface_config_t devcfg={
+        .clock_speed_hz=10*1000*1000,            //currently only up to 4MHz for internel connect
+        .mode=0,                                //SPI mode 0
+        .spics_io_num=PIN_NUM_CS,               //CS pin
+        .queue_size=8,                          //We want to be able to queue 7 transactions at a time
+        .pre_cb=NULL,  
+        .cs_ena_pretrans = 0,
+    };
+    //Initialize the SPI bus and the device to test
+    ret=spi_bus_initialize(HSPI_HOST, &buscfg, (use_dma?1:0));
+    TEST_ASSERT(ret==ESP_OK);
+    ret=spi_bus_add_device(HSPI_HOST, &devcfg, spi);
+    TEST_ASSERT(ret==ESP_OK);
+}
+
+static void speed_deinit(spi_device_handle_t spi)
+{
+    TEST_ESP_OK( spi_bus_remove_device(spi) );
+    TEST_ESP_OK( spi_bus_free(HSPI_HOST) );
+}
+
+static void sorted_array_insert(uint32_t* array, int* size, uint32_t item)
+{
+    int pos;
+    for (pos = *size; pos>0; pos--) {
+        if (array[pos-1] < item) break;
+        array[pos] = array[pos-1];
+    }
+    array[pos]=item;
+    (*size)++;
+}
+
+#define TEST_TIMES  11
+
+TEST_CASE("spi_speed","[spi]")
+{
+    RECORD_TIME_PREPARE();    
+    uint32_t t_flight;
+    //to get rid of the influence of randomly interrupts, we measured the performance by median value
+    uint32_t t_flight_sorted[TEST_TIMES];
+    int t_flight_num = 0;
+        
+    spi_device_handle_t spi;
+    const bool use_dma = true;
+    WORD_ALIGNED_ATTR spi_transaction_t trans = {
+        .length = 1*8,
+        .flags = SPI_TRANS_USE_TXDATA,
+    };
+
+    //first work with DMA
+    speed_setup(&spi, use_dma);
+
+    //first time introduces a device switch, which costs more time. we skip this
+    spi_device_transmit(spi, &trans);
+    
+    //record flight time by isr, with DMA
+    t_flight_num = 0;
+    for (int i = 0; i < TEST_TIMES; i++) {
+        RECORD_TIME_START();
+        spi_device_transmit(spi, &trans);
+        RECORD_TIME_END(&t_flight);        
+        sorted_array_insert(t_flight_sorted, &t_flight_num, t_flight);
+    }
+    TEST_PERFORMANCE_LESS_THAN(SPI_PER_TRANS_NO_POLLING, "%d us", t_flight_sorted[(TEST_TIMES+1)/2]);
+    for (int i = 0; i < TEST_TIMES; i++) {
+        ESP_LOGI(TAG, "%d", t_flight_sorted[i]);
+    }
+    
+    speed_deinit(spi);
+    speed_setup(&spi, !use_dma);
+    
+    //first time introduces a device switch, which costs more time. we skip this
+    spi_device_transmit(spi, &trans);
+    
+    //record flight time by isr, without DMA
+    t_flight_num = 0;
+    for (int i = 0; i < TEST_TIMES; i++) {
+        RECORD_TIME_START();
+        spi_device_transmit(spi, &trans);
+        RECORD_TIME_END(&t_flight);  
+        sorted_array_insert(t_flight_sorted, &t_flight_num, t_flight);
+    }
+    TEST_PERFORMANCE_LESS_THAN( SPI_PER_TRANS_NO_POLLING_NO_DMA, "%d us", t_flight_sorted[(TEST_TIMES+1)/2]);
+    for (int i = 0; i < TEST_TIMES; i++) {
+        ESP_LOGI(TAG, "%d", t_flight_sorted[i]);
+    }    
+    speed_deinit(spi);    
 }
