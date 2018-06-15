@@ -811,12 +811,12 @@ static void uart_rx_intr_handler_default(void *param)
                     if (p_uart->tx_len_tot > 0 && p_uart->tx_ptr && p_uart->tx_len_cur > 0) {
                         //To fill the TX FIFO.
                         int send_len = p_uart->tx_len_cur > tx_fifo_rem ? tx_fifo_rem : p_uart->tx_len_cur;
-						UART_ENTER_CRITICAL_ISR(&uart_spinlock[uart_num]);
+						//UART_ENTER_CRITICAL_ISR(&uart_spinlock[uart_num]);
 						if(uart_reg->rs485_conf.en) {
 							uart_reg->conf0.sw_rts = 0;
-							uart_reg->int_ena.tx_done = 1;
+							uart_enable_intr_mask(uart_num, UART_TX_DONE_INT_ENA_M);
 						}
-						UART_EXIT_CRITICAL_ISR(&uart_spinlock[uart_num]);
+						//UART_EXIT_CRITICAL_ISR(&uart_spinlock[uart_num]);
                         for(buf_idx = 0; buf_idx < send_len; buf_idx++) {
                             WRITE_PERI_REG(UART_FIFO_AHB_REG(uart_num), *(p_uart->tx_ptr++) & 0xff);
                         }
@@ -948,9 +948,6 @@ static void uart_rx_intr_handler_default(void *param)
             UART_ENTER_CRITICAL_ISR(&uart_spinlock[uart_num]);
             uart_reset_rx_fifo(uart_num);
             uart_reg->int_clr.rxfifo_ovf = 1;
-			if(uart_reg->rs485_conf.en) {
-				uart_reg->conf0.sw_rts = 1; 
-			}
             UART_EXIT_CRITICAL_ISR(&uart_spinlock[uart_num]);
             uart_event.type = UART_FIFO_OVF;
             UART_ENTER_CRITICAL_ISR(&uart_selectlock);
@@ -1004,6 +1001,9 @@ static void uart_rx_intr_handler_default(void *param)
         } else if(uart_intr_status & UART_TX_DONE_INT_ST_M) {
             uart_disable_intr_mask(uart_num, UART_TX_DONE_INT_ENA_M);
             uart_clear_intr_status(uart_num, UART_TX_DONE_INT_CLR_M);
+			uart_reset_rx_fifo(uart_num);
+			if(uart_reg->rs485_conf.en)
+				uart_reg->conf0.sw_rts = 1;
             xSemaphoreGiveFromISR(p_uart_obj[uart_num]->tx_done_sem, &HPTaskAwoken);
             if(HPTaskAwoken == pdTRUE) {
                 portYIELD_FROM_ISR() ;
@@ -1077,7 +1077,7 @@ static int uart_fill_fifo(uart_port_t uart_num, const char* buffer, uint32_t len
     uint8_t copy_cnt = (len >= tx_remain_fifo_cnt ? tx_remain_fifo_cnt : len);
 	if(UART[uart_num]->rs485_conf.en) {
 		UART[uart_num]->conf0.sw_rts = 0;
-		UART[uart_num]->int_ena.tx_done = 1;
+		uart_enable_intr_mask(uart_num, UART_TX_DONE_INT_ENA_M);
 	}
     for(i = 0; i < copy_cnt; i++) {
         WRITE_PERI_REG(UART_FIFO_AHB_REG(uart_num), buffer[i]);
