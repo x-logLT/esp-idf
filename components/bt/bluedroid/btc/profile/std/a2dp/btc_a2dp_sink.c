@@ -87,8 +87,8 @@ enum {
    but due to link flow control or thread preemption in lower
    layers we might need to temporarily buffer up data */
 
-/* 5 frames is equivalent to 6.89*5*2.9 ~= 100 ms @ 44.1 khz, 20 ms mediatick */
-#define MAX_OUTPUT_A2DP_SNK_FRAME_QUEUE_SZ     (5)
+/* 18 frames is equivalent to 6.89*18*2.9 ~= 360 ms @ 44.1 khz, 20 ms mediatick */
+#define MAX_OUTPUT_A2DP_SNK_FRAME_QUEUE_SZ     (18)
 
 typedef struct {
     UINT16 num_frames_to_be_processed;
@@ -586,7 +586,7 @@ static void btc_a2dp_sink_handle_inc_media(tBT_SBC_HDR *p_msg)
     OI_STATUS status;
     int num_sbc_frames = p_msg->num_frames_to_be_processed;
     UINT32 sbc_frame_len = p_msg->len - 1;
-    availPcmBytes = 2 * sizeof(pcmData);
+    availPcmBytes = sizeof(pcmData);
 
     /* XXX: Check if the below check is correct, we are checking for peer to be sink when we are sink */
     if (btc_av_get_peer_sep() == AVDT_TSEP_SNK || (btc_aa_snk_cb.rx_flush)) {
@@ -617,7 +617,7 @@ static void btc_a2dp_sink_handle_inc_media(tBT_SBC_HDR *p_msg)
         p_msg->len = sbc_frame_len + 1;
     }
 
-    btc_a2d_data_cb_to_app((uint8_t *)pcmData, (2 * sizeof(pcmData) - availPcmBytes));
+    btc_a2d_data_cb_to_app((uint8_t *)pcmData, (sizeof(pcmData) - availPcmBytes));
 }
 
 /*******************************************************************************
@@ -763,7 +763,7 @@ static void btc_a2dp_sink_thread_init(UNUSED_ATTR void *context)
 
     btc_a2dp_sink_state = BTC_A2DP_SINK_STATE_ON;
 
-    btc_aa_snk_cb.RxSbcQ = fixed_queue_new(SIZE_MAX);
+    btc_aa_snk_cb.RxSbcQ = fixed_queue_new(QUEUE_SIZE_MAX);
 
     btc_a2dp_control_init();
 }
