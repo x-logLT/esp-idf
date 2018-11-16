@@ -46,14 +46,6 @@ extern "C" {
 #define UART_INVERSE_TXD   (UART_TXD_INV_M)    /*!< UART TXD output inverse*/
 #define UART_INVERSE_RTS   (UART_RTS_INV_M)    /*!< UART RTS output inverse*/
 
-typedef enum {
-	UART_MODE_UART = 0x0,
-	UART_MODE_RS485_A = 0x1,
-	UART_MODE_RS485_B = 0x2,
-	UART_MODE_RS485_SOFT = 0x3,
-	UART_MODE_IRDA = 0x4,
-} uart_mode_t;
-
 /**
  * @brief UART mode selection
  */
